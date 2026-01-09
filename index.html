@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Velora TV Premium</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <!-- Librería HLS.js optimizada -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        :root { 
+            --accent: #ff0a16; 
+            --bg: #050505;
+            --glass: rgba(255, 255, 255, 0.05);
+            --anim-speed: 0.4s;
+        }
+        
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background: var(--bg); color: white; 
+            font-family: 'Inter', 'Segoe UI', sans-serif; 
+            overflow: hidden; outline: none;
+        }
+
+        #player-container { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1;
+            transition: transform var(--anim-speed) ease, filter var(--anim-speed) ease;
+            background: #000;
+        }
+
+        body.menu-active #player-container { transform: scale(0.95); filter: brightness(0.4) blur(10px); }
+
+        iframe, video { width: 100%; height: 100%; border: none; display: block; background: #000; }
+
+        .mouse-zone {
+            position: fixed; z-index: 100; opacity: 0; transition: all 0.3s ease;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(0,0,0,0.6); border: 1px solid rgba(255,255,255,0.1);
+        }
+        .mouse-zone:hover { opacity: 1; }
+
+        .touch-side { top: 50%; transform: translateY(-50%); width: 80px; height: 120px; cursor: pointer; }
+        .touch-left { left: 0; border-radius: 0 15px 15px 0; }
+        .touch-right { right: 0; border-radius: 15px 0 0 15px; }
+        
+        .arrow { width: 18px; height: 18px; border-top: 4px solid white; border-left: 4px solid white; }
+        .arrow-left { transform: rotate(-45deg); margin-left: 10px; }
+        .arrow-right { transform: rotate(135deg); margin-right: 10px; }
+
+        .top-menu-zone { top: 0; left: 50%; transform: translateX(-50%); width: 180px; height: 50px; border-radius: 0 0 15px 15px; cursor: pointer; border-top: none; }
+        .bottom-zone { bottom: 0; left: 50%; transform: translateX(-50%); width: 120px; height: 40px; border-radius: 15px 15px 0 0; cursor: pointer; border-bottom: none; }
+        
+        #android-keypad {
+            position: fixed; bottom: 60px; left: 50%; transform: translateX(-50%) translateY(20px);
+            background: rgba(0,0,0,0.95); backdrop-filter: blur(25px);
+            padding: 15px; border-radius: 20px; border: 1px solid var(--accent);
+            display: grid; grid-template-columns: repeat(3, 55px); gap: 10px;
+            z-index: 2000; opacity: 0; pointer-events: none; transition: 0.3s ease;
+        }
+        #android-keypad.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+        .key { background: var(--glass); border: 1px solid rgba(255,255,255,0.1); height: 50px; display: flex; align-items: center; justify-content: center; border-radius: 10px; font-weight: 700; cursor: pointer; }
+        .key:active { background: var(--accent); }
+
+        #hud {
+            position: fixed; top: 40px; left: 40px; z-index: 10;
+            padding: 15px 25px; 
+            background: rgba(0,0,0,0.85);
+            backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+            border-left: 5px solid var(--accent);
+            border-radius: 4px;
+            transform: translateX(-40px); opacity: 0; 
+            transition: 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        #hud.show { opacity: 1; transform: translateX(0); }
+        .hud-logo { width: 60px; height: 60px; object-fit: contain; }
+        .hud-text { display: flex; flex-direction: column; }
+        .hud-label { font-size: 10px; text-transform: uppercase; color: var(--accent); letter-spacing: 3px; font-weight: 900; }
+        .hud-main { font-size: 24px; font-weight: 200; color: white; }
+        /* Estilo para la guía EPG en el HUD */
+        .hud-epg { font-size: 14px; color: rgba(255,255,255,0.7); margin-top: 4px; font-weight: 400; }
+
+        #num-selector {
+            position: fixed; top: 40px; right: 40px; z-index: 1000;
+            background: var(--accent); padding: 10px 30px; font-size: 35px; font-weight: 900; border-radius: 10px; display: none;
+        }
+
+        #navbar {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.96); backdrop-filter: blur(50px);
+            z-index: 1500; display: none; padding: 60px; box-sizing: border-box; overflow-y: auto;
+        }
+        .menu-header { text-align: center; margin-bottom: 40px; }
+        .menu-logo { font-size: 42px; font-weight: 900; color: white; letter-spacing: 8px; margin: 0; }
+        .category-name { font-size: 14px; text-transform: uppercase; color: rgba(255,255,255,0.3); border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; margin: 30px 0 15px; letter-spacing: 3px; }
+        
+        .channels-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; }
+
+        .card { 
+            background: var(--glass); padding: 20px; border-radius: 15px; text-align: center; 
+            border: 1px solid rgba(255,255,255,0.05); transition: 0.3s; cursor: pointer;
+            display: flex; flex-direction: column; align-items: center; gap: 10px;
+        }
+        .card-img { width: 60px; height: 60px; object-fit: contain; margin-bottom: 5px; }
+        .card.focused, .card:hover { background: var(--accent); transform: scale(1.05); }
+        /* Estilo para EPG en las tarjetas del menú */
+        .card-epg { font-size: 9px; opacity: 0.8; margin-top: 5px; line-height: 1.2; height: 22px; overflow: hidden; }
+    </style>
+</head>
+<body onclick="window.focus()" onmouseover="window.focus()">
+
+    <div id="num-selector">--</div>
+
+    <div id="hud">
+        <img id="hud-img" class="hud-logo" src="" onerror="this.style.display='none'" onload="this.style.display='block'" alt="">
+        <div class="hud-text">
+            <div class="hud-label">Estás viendo</div>
+            <div id="hud-content" class="hud-main">CH <b>01</b></div>
+            <div id="hud-epg" class="hud-epg">Cargando guía...</div>
+        </div>
+    </div>
+
+    <!-- Zonas de control -->
+    <div class="mouse-zone touch-side touch-left" onclick="cambiarCanal(-1)"><div class="arrow arrow-left"></div></div>
+    <div class="mouse-zone touch-side touch-right" onclick="cambiarCanal(1)"><div class="arrow arrow-right"></div></div>
+    <div class="mouse-zone top-menu-zone" onclick="toggleMenu()"><div style="font-size:11px; letter-spacing:5px; font-weight:900;">MENU</div></div>
+    <div class="mouse-zone bottom-zone" onclick="toggleKeypad()"><div style="font-size:18px;">⌨</div></div>
+
+    <div id="android-keypad">
+        <div class="key" onclick="handleNumbers(1)">1</div><div class="key" onclick="handleNumbers(2)">2</div><div class="key" onclick="handleNumbers(3)">3</div>
+        <div class="key" onclick="handleNumbers(4)">4</div><div class="key" onclick="handleNumbers(5)">5</div><div class="key" onclick="handleNumbers(6)">6</div>
+        <div class="key" onclick="handleNumbers(7)">7</div><div class="key" onclick="handleNumbers(8)">8</div><div class="key" onclick="handleNumbers(9)">9</div>
+        <div class="key" style="grid-column: 2" onclick="handleNumbers(0)">0</div>
+        <div class="key" style="grid-column: span 3; font-size:10px;" onclick="toggleKeypad()">CERRAR</div>
+    </div>
+
+    <nav id="navbar">
+        <div class="menu-header">
+            <h1 class="menu-logo">VELORA TV</h1>
+            <div style="font-size: 11px; color: rgba(255,255,255,0.4); letter-spacing: 3px; margin-top: 5px;">Kevin Luna Edition</div>
+        </div>
+        <div id="contenedor-canales"></div>
+    </nav>
+
+    <div id="player-container"></div>
+
+    <script>
+        // Listas de Canales separadas para mantener el orden
+        const nuevosCanalesHD = [
+            { nombre: "ADN 40 HD", url: "https://mdstrm.com/live-stream-playlist/60b578b060947317de7b57ac.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Azteca 7 HD", url: "https://mdstrm.com/live-stream-playlist/609ad46a7a441137107d7a81.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Azteca 1 HD", url: "https://mdstrm.com/live-stream-playlist/609b243156cca108312822a6.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Fox Sports Premium HD", url: "https://live20.bozztv.com/akamaissh101/ssh101/foxsports/playlist.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Las Estrellas HD", url: "https://channel01-onlymex.akamaized.net/hls/live/2022749/event01/index.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "María Visión HD", url: "https://1601580044.rsc.cdn77.org/live/_jcn_/amlst:Mariavision/master.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Canal 6 Multimedios HD", url: "https://mdstrm.com/live-stream-playlist/5c54d38ca392a5119bb0aa0d.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "MVS TV HD", url: "https://dish.akamaized.net/Content/HLS_HLS_CLR/Live/channel(mvs)/variant.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Sony Channel HD", url: "https://fl1.moveonjoy.com/Sony_Movie_Channel/index.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Canal 11 HD", url: "https://vivo.canaloncelive.tv/securepkgr3/oncemexico/playlist.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Antenna TV HD", url: "https://5ca9af4645e15.streamlock.net/grd/videogrd/playlist.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Canal 44 HD", url: "https://liveos.bytecazt.com/udgtv/streams/cfprivq23akg00a7ke2g_d306m7q9io6g00fsq3cg_.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Cinecanal HD", url: "https://streamer1.nexgen.bz/CINECANAL/index.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Antena 3 HD", url: "http://176.65.146.237:8401/play/a0ae/index.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "ATN Televisión HD", url: "https://streaming5.globalhostla.com/rtplive/atntelevision/playlist.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Aurora Media HD", url: "https://cdn.streamhispanatv.net:3417/live/auroramflive.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Be Mad HD", url: "http://176.65.146.237:8401/play/a0aj/index.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Cine Sony HD", url: "https://a-cdn.klowdtv.com/live1/cine_720p/playlist.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Cine Terror HD", url: "http://cfd-v4-service-channel-stitcher-use1-1.prd.pluto.tv/stitch/hls/channel/5d8d180092e97a5e107638d3/master.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Disney Channel HD", url: "http://201.217.246.177:8000/play/a02r/index.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "DW HD", url: "https://dwamdstream104.akamaized.net/hls/live/2015530/dwstream104/master.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Fox Sports HD", url: "https://live-manifest.production-public.tubi.io/live/d906efca-1302-4e29-b0d9-9a1d7a305d69/playlist.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Go TV HD", url: "https://rds3.desdeparaguay.net/gotv/gotv/playlist.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Hola TV HD", url: "https://hola-play-2108fd06-86d4-44e8-9867-c35b4895a1c1-es.fast.rakuten.tv/v1/master/0547f18649bd788bec7b67b746e47670f558b6b2/production-LiveChannel-6433/master.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Mega HD", url: "http://176.65.146.237:8401/play/a0a5/index.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Nat Geo HD", url: "https://cors-proxy.cooks.fyi/https://streamer1.nexgen.bz/NAT_GEO/index.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Universo HD", url: "http://190.11.225.124:5000/live/universo_hd/playlist.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Bob Esponja HD", url: "https://service-stitcher.clusters.pluto.tv/v1/stitch/embed/hls/channel/5f1aca0b4e448e00075e7c5e/master.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Acción Pluto HD", url: "https://service-stitcher.clusters.pluto.tv/v1/stitch/embed/hls/channel/5f1ac2591dd8880007bb7d6d/master.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Kids Pluto HD", url: "https://service-stitcher.clusters.pluto.tv/stitch/hls/channel/5dd6dae8ce788b0009eaf77b/master.m3u8", type: "hls", cat: "Nuevos HD" },
+            { nombre: "Sony Novelas HD", url: "https://a89829b8dca2471ab52ea9a57bc28a35.mediatailor.us-east-1.amazonaws.com/v1/master/0fb304b2320b25f067414d481a779b77db81760d/CanelaTV_SonyCanalNovelas/playlist.m3u8", type: "hls", cat: "Nuevos HD" }
+        ];
+
+        const canalesOriginales = [
+            {id: 'tudn', nombre: 'TUDN', cat: 'Deportes'}, {id: 'golperu', nombre: 'GOL PERU', cat: 'Deportes'}, {id: 'tntsports', nombre: 'TNT Sports', cat: 'Deportes'},
+            {id: 'espnpremium', nombre: 'ESPN Premium Lat', cat: 'Deportes'}, {id: 'espnpremiumargentina', nombre: 'ESPN Premium Arg', cat: 'Deportes'}, {id: 'tycsports', nombre: 'TyC Sports', cat: 'Deportes'},
+            {id: 'foxsports', nombre: 'Fox Sports', cat: 'Deportes'}, {id: 'foxsports2', nombre: 'Fox Sports 2', cat: 'Deportes'}, {id: 'foxsports3', nombre: 'Fox Sports 3', cat: 'Deportes'},
+            {id: 'foxdeportes', nombre: 'Fox Deportes', cat: 'Deportes'}, {id: 'espn', nombre: 'ESPN Lat', cat: 'Deportes'}, {id: 'espnar', nombre: 'ESPN Argentina', cat: 'Deportes'},
+            {id: 'espncol', nombre: 'ESPN Colombia', cat: 'Deportes'}, {id: 'espn2', nombre: 'ESPN 2', cat: 'Deportes'}, {id: 'espn3', nombre: 'ESPN 3', cat: 'Deportes'},
+            {id: 'espn4', nombre: 'ESPN 4', cat: 'Deportes'}, {id: 'espn5', nombre: 'ESPN 5', cat: 'Deportes'}, {id: 'espn6', nombre: 'ESPN 6', cat: 'Deportes'},
+            {id: 'espn7', nombre: 'ESPN 7', cat: 'Deportes'}, {id: 'directvsports', nombre: 'Directv Sports', cat: 'Deportes'}, {id: 'directvsports2', nombre: 'Directv Sports 2', cat: 'Deportes'},
+            {id: 'directvsportsplus', nombre: 'Directv Sports Plus', cat: 'Deportes'}, {id: 'foxsportsmexico', nombre: 'Fox Sports MX', cat: 'Deportes'}, {id: 'foxsports2mexico', nombre: 'Fox Sports 2 MX', cat: 'Deportes'},
+            {id: 'foxsports3mexico', nombre: 'Fox Sports 3 MX', cat: 'Deportes'}, {id: 'espnmexico', nombre: 'ESPN MX', cat: 'Deportes'}, {id: 'espn2mexico', nombre: 'ESPN 2 MX', cat: 'Deportes'},
+            {id: 'espn3mexico', nombre: 'ESPN 3 MX', cat: 'Deportes'}, {id: 'espn4mexico', nombre: 'ESPN 4 MX', cat: 'Deportes'}, {id: 'espn5mexico', nombre: 'ESPN 5 MX', cat: 'Deportes'},
+            {id: 'tvcdeportes', nombre: 'TVC Deportes', cat: 'Deportes'}, {id: 'liga1', nombre: 'Liga 1', cat: 'Deportes'}, {id: 'liga1max', nombre: 'Liga 1 Max', cat: 'Deportes'},
+            {id: 'foxsportspremium', nombre: 'Fox Sports Premium', cat: 'Deportes'}, {id: 'movistardeportes', nombre: 'Movistar Deportes PE', cat: 'Deportes'}, {id: 'daznf1', nombre: 'DAZN F1', cat: 'Deportes'},
+            {id: 'daznlaliga', nombre: 'DAZN La Liga', cat: 'Deportes'}, {id: 'movistarligadecampeones', nombre: 'M. Liga de Campeones', cat: 'Deportes'}, {id: 'winsports', nombre: 'Win Sports', cat: 'Deportes'},
+            {id: 'winsportsplus', nombre: 'Win Sports Plus', cat: 'Deportes'}, {id: 'beinsportsxtra', nombre: 'Bein Sports Xtra', cat: 'Deportes'}, {id: 'movistarlaliga', nombre: 'Movistar La Liga', cat: 'Deportes'},
+            {id: 'nba', nombre: 'NBA TV', cat: 'Deportes'}, {id: 'movistardeporteses', nombre: 'Movistar Deportes ES', cat: 'Deportes'}, {id: 'aztecadeportes', nombre: 'Azteca Deportes', cat: 'Deportes'},
+            {id: 'tntsportschile', nombre: 'TNT Sports Chile', cat: 'Deportes'}, {id: 'mlbnetwork', nombre: 'MLB Network', cat: 'Deportes'}, {id: 'skysportsmexico', nombre: 'Sky Sports MX', cat: 'Deportes'},
+            {id: 'skysportsbundesliga', nombre: 'Sky Sports Bundesliga', cat: 'Deportes'}, {id: 'skysportsf1', nombre: 'Sky Sports F1', cat: 'Deportes'},
+            {id: 'azteca7', nombre: 'Azteca 7', cat: 'Nacionales'}, {id: 'canal5', nombre: 'Canal 5', cat: 'Nacionales'}, {id: 'latina', nombre: 'Latina', cat: 'Nacionales'},
+            {id: 'americatv', nombre: 'America TV', cat: 'Nacionales'}, {id: 'telefe', nombre: 'Telefe', cat: 'Nacionales'}, {id: 'eltrece', nombre: 'El Trece', cat: 'Nacionales'},
+            {id: 'telemundo51', nombre: 'Telemundo Miami', cat: 'Nacionales'}, {id: 'aztecauno', nombre: 'Azteca Uno', cat: 'Nacionales'}, {id: 'lasestrellas', nombre: 'Las Estrellas', cat: 'Nacionales'},
+            {id: 'caracol', nombre: 'Caracol', cat: 'Nacionales'}, {id: 'atv', nombre: 'ATV', cat: 'Nacionales'}, {id: 'univision', nombre: 'Univision', cat: 'Nacionales'},
+            {id: 'telemundopr', nombre: 'Telemundo PR', cat: 'Nacionales'}, {id: 'willax', nombre: 'Willax TV', cat: 'Nacionales'}, {id: 'globaltv', nombre: 'Global TV', cat: 'Nacionales'},
+            {id: 'rcn', nombre: 'RCN', cat: 'Nacionales'}, {id: 'antena3', nombre: 'Antena 3', cat: 'Nacionales'}, {id: 'tvpublica', nombre: 'TV Publica', cat: 'Nacionales'},
+            {id: 'space', nombre: 'Space', cat: 'Cine'}, {id: 'warnerchannel', nombre: 'Warner Bros TV', cat: 'Cine'}, {id: 'tnt', nombre: 'TNT', cat: 'Cine'},
+            {id: 'starchannel', nombre: 'Star Channel', cat: 'Cine'}, {id: 'cinemax', nombre: 'Cinemax', cat: 'Cine'}, {id: 'cinecanal', nombre: 'Cinecanal', cat: 'Cine'},
+            {id: 'distritocomedia', nombre: 'Distrito Comedia', cat: 'Cine'}, {id: 'galavision', nombre: 'Galavision', cat: 'Cine'}, {id: 'tlnovelas', nombre: 'tlNovelas', cat: 'Cine'},
+            {id: 'syfy', nombre: 'Syfy USA', cat: 'Cine'}, {id: 'unicable', nombre: 'Unicable', cat: 'Cine'}, {id: 'fx', nombre: 'FX', cat: 'Cine'},
+            {id: 'goldenplus', nombre: 'Golden Plus', cat: 'Cine'}, {id: 'goldenedge', nombre: 'Golden Edge', cat: 'Cine'}, {id: 'goldenpremier', nombre: 'Golden Premiere', cat: 'Cine'},
+            {id: 'tntseries', nombre: 'TNT Series', cat: 'Cine'}, {id: 'sony', nombre: 'Sony Channel', cat: 'Cine'}, {id: 'axn', nombre: 'AXN', cat: 'Cine'},
+            {id: 'universalchannel', nombre: 'Universal TV', cat: 'Cine'}, {id: 'studiouniversal', nombre: 'Studio Universal', cat: 'Cine'}, {id: 'amc', nombre: 'AMC', cat: 'Cine'},
+            {id: 'paramountchannel', nombre: 'Paramount', cat: 'Cine'}, {id: 'mtv', nombre: 'MTV', cat: 'Cine'}, {id: 'comedycentral', nombre: 'Comedy Central', cat: 'Cine'},
+            {id: 'tntnovelas', nombre: 'TNT Novelas', cat: 'Cine'}, {id: 'universalcinema', nombre: 'Universal Cinema', cat: 'Cine'},
+            {id: 'history', nombre: 'History', cat: 'Cultura'}, {id: 'history2', nombre: 'History 2', cat: 'Cultura'}, {id: 'natgeo', nombre: 'Nat Geo', cat: 'Cultura'},
+            {id: 'animalplanet', nombre: 'Animal Planet', cat: 'Cultura'}, {id: 'discoverychannel', nombre: 'Discovery Channel', cat: 'Cultura'}, {id: 'discoveryhyh', nombre: 'Discovery H&H', cat: 'Cultura'},
+            {id: 'investigation', nombre: 'ID Investigation', cat: 'Cultura'}, {id: 'elgourmet', nombre: 'El Gourmet', cat: 'Cultura'}, {id: 'disneyjr', nombre: 'Disney Jr', cat: 'Niños'},
+            {id: 'nick', nombre: 'Nick', cat: 'Niños'}, {id: 'nickjr', nombre: 'Nick Jr', cat: 'Niños'}, {id: 'cartoonnetwork', nombre: 'Cartoon Network', cat: 'Niños'},
+            {id: 'cartoonito', nombre: 'Cartoonito', cat: 'Niños'}, {id: 'tooncast', nombre: 'Tooncast', cat: 'Niños'}, {id: 'discoverykids', nombre: 'Discovery Kids', cat: 'Niños'},
+            {id: 'disneychannel', nombre: 'Disney Channel', cat: 'Niños'}
+        ];
+
+        // NUEVOS AGREGADOS AL FINAL (Empiezan en el ID 142)
+        const canalesExtraHD = [
+            { nombre: "Latina HD", url: "https://redirector.rudo.video/hls-video/567ffde3fa319fadf3419efda25619456231dfea/latina/latina/.m3u8", type: "hls", cat: "Plus HD" },
+            { nombre: "HBO 2", url: "https://cors-proxy.cooks.fyi/https://streamer1.nexgen.bz/HBO2/index.m3u8", type: "hls", cat: "Plus HD" },
+            { nombre: "HBO Plus", url: "https://cors-proxy.cooks.fyi/https://streamer1.nexgen.bz/HBO_PLUS/index.m3u8", type: "hls", cat: "Plus HD" },
+            { nombre: "HBO Extreme", url: "https://cors-proxy.cooks.fyi/https://streamer1.nexgen.bz/HBO_XTREME/index.m3u8", type: "hls", cat: "Plus HD" },
+            { nombre: "HBO Mundi", url: "https://cors-proxy.cooks.fyi/https://streamer1.nexgen.bz/HBO_MUNDI/index.m3u8", type: "hls", cat: "Plus HD" },
+            { nombre: "Discovery Channel HD", url: "https://cors-proxy.cooks.fyi/https://streamer1.nexgen.bz/DISCOVERY/index.m3u8", type: "hls", cat: "Plus HD" },
+            { nombre: "Claro Sports", url: "", type: "hls", cat: "Plus HD" } // Sin link en tu lista, añadido como placeholder
+        ];
+
+        // FUSIONAR TODO EN ORDEN
+        const canales = [...nuevosCanalesHD, ...canalesOriginales, ...canalesExtraHD];
+
+        let index = 0, menuOpen = false, keypadOpen = false, focusIdx = 0, timerHUD, timerNum, numInput = "", hls;
+        
+        // Variables para la guía EPG
+        let epgData = null;
+        const epgUrl = "https://cors-proxy.cooks.fyi/http://m3u4u.com/xml/3m97yp35x2c5r4p6ndxq";
+
+        async function cargarEPG() {
+            try {
+                const response = await fetch(epgUrl);
+                const text = await response.text();
+                const parser = new DOMParser();
+                epgData = parser.parseFromString(text, "text/xml");
+                console.log("EPG cargada con éxito");
+                actualizarEPGVisual();
+            } catch (e) {
+                console.error("Error cargando EPG:", e);
+            }
+        }
+
+        function obtenerProgramaActual(nombreCanal) {
+            if (!epgData) return "Guía no disponible";
+            
+            // Buscamos el canal en el XML. m3u4u suele usar display-name.
+            const programs = Array.from(epgData.getElementsByTagName('programme'));
+            const ahora = new Date();
+            
+            // El formato de tiempo en XMLTV suele ser YYYYMMDDHHMMSS +0000
+            function parseXmlTime(timeStr) {
+                const y = timeStr.substr(0, 4), m = timeStr.substr(4, 2) - 1, d = timeStr.substr(6, 2);
+                const h = timeStr.substr(8, 2), min = timeStr.substr(10, 2), s = timeStr.substr(12, 2);
+                return new Date(Date.UTC(y, m, d, h, min, s));
+            }
+
+            const canalLimpio = nombreCanal.toLowerCase().replace(/\s+/g, '');
+            
+            // Buscamos el programa que coincide con el nombre del canal y la hora actual
+            const programa = programs.find(p => {
+                const pChannel = p.getAttribute('channel').toLowerCase().replace(/\s+/g, '');
+                // También intentamos comparar con el nombre directo si el ID no coincide
+                if (pChannel.includes(canalLimpio) || canalLimpio.includes(pChannel)) {
+                    const inicio = parseXmlTime(p.getAttribute('start'));
+                    const fin = parseXmlTime(p.getAttribute('stop'));
+                    return ahora >= inicio && ahora <= fin;
+                }
+                return false;
+            });
+
+            if (programa) {
+                const titulo = programa.getElementsByTagName('title')[0]?.textContent || "Sin título";
+                return titulo;
+            }
+            return "Sin información de programa";
+        }
+
+        function actualizarEPGVisual() {
+            // Actualizar HUD si está visible
+            const c = canales[index];
+            document.getElementById('hud-epg').innerText = obtenerProgramaActual(c.nombre);
+            
+            // Actualizar todas las tarjetas del menú
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((card, i) => {
+                const epgElem = card.querySelector('.card-epg');
+                if (epgElem) {
+                    epgElem.innerText = obtenerProgramaActual(canales[i].nombre);
+                }
+            });
+        }
+
+        function cargarCanal(i) {
+            if (i < 0 || i >= canales.length) return;
+            index = i;
+            const c = canales[index];
+            const container = document.getElementById('player-container');
+            
+            // OPTIMIZACIÓN LG: Limpieza agresiva del DOM y memoria
+            container.innerHTML = ''; 
+            if(hls) { 
+                hls.stopLoad(); // Detener carga de red inmediatamente
+                hls.detachMedia();
+                hls.destroy(); 
+                hls = null; 
+            }
+
+            // Si el canal no tiene URL válida (caso Claro Sports sin link), evitar errores
+            if (c.type === 'hls' && !c.url) {
+                document.getElementById('hud-content').innerHTML = `CH <b>${(index + 1).toString().padStart(2, '0')}</b> - ${c.nombre} (Sin Señal)`;
+                return; 
+            }
+
+            if (c.type === 'hls') {
+                const video = document.createElement('video');
+                // Atributos clave para Smart TV
+                video.autoplay = true;
+                video.muted = true; // Crucial para autoplay
+                video.preload = "auto"; // Cargar metadata rápido
+                video.setAttribute('playsinline', 'true');
+                video.setAttribute('webkit-playsinline', 'true');
+                video.controls = true;
+                container.appendChild(video);
+
+                if (Hls.isSupported()) {
+                    // Configuración HLS optimizada para baja latencia en TV
+                    hls = new Hls({
+                        capLevelToPlayerSize: true,
+                        maxBufferLength: 10, // Buffer pequeño para arranque rápido
+                        maxMaxBufferLength: 15,
+                        startLevel: -1,
+                    });
+                    hls.loadSource(c.url);
+                    hls.attachMedia(video);
+                    hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                        var playPromise = video.play();
+                        if (playPromise !== undefined) {
+                            playPromise.then(_ => {
+                                // Intentar activar sonido tras un breve delay
+                                setTimeout(() => { video.muted = false; }, 250);
+                            }).catch(error => {
+                                console.log("Autoplay prevenido por TV");
+                            });
+                        }
+                    });
+                } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+                    video.src = c.url;
+                    video.play();
+                }
+            } else {
+                const iframe = document.createElement('iframe');
+                iframe.src = `https://embed.saohgdasregions.fun/embed2/${c.id}.html`;
+                iframe.allow = "autoplay; fullscreen";
+                iframe.allowFullscreen = true;
+                container.appendChild(iframe);
+            }
+            
+            // HUD
+            const hud = document.getElementById('hud');
+            const hudImg = document.getElementById('hud-img');
+            // MODIFICADO: Ahora busca en la carpeta logos
+            hudImg.src = `logos/${index + 1}.png`; 
+            
+            document.getElementById('hud-content').innerHTML = `CH <b>${(index + 1).toString().padStart(2, '0')}</b> - ${c.nombre}`;
+            
+            // Actualizar texto EPG en el HUD
+            document.getElementById('hud-epg').innerText = obtenerProgramaActual(c.nombre);
+
+            hud.classList.add('show');
+            clearTimeout(timerHUD);
+            timerHUD = setTimeout(() => hud.classList.remove('show'), 4000);
+            window.focus();
+        }
+
+        function cambiarCanal(dir) {
+            index = (index + dir + canales.length) % canales.length;
+            cargarCanal(index);
+        }
+
+        function toggleMenu() {
+            menuOpen = !menuOpen;
+            document.body.classList.toggle('menu-active', menuOpen);
+            document.getElementById('navbar').style.display = menuOpen ? 'block' : 'none';
+            if(menuOpen) { 
+                focusIdx = index; 
+                actualizarFoco(); 
+                actualizarEPGVisual(); // Actualizar guías al abrir menú
+            }
+        }
+
+        function toggleKeypad() {
+            keypadOpen = !keypadOpen;
+            document.getElementById('android-keypad').classList.toggle('show', keypadOpen);
+        }
+
+        function handleNumbers(num) {
+            numInput += num;
+            const display = document.getElementById('num-selector');
+            display.innerText = numInput; display.style.display = "block";
+            clearTimeout(timerNum);
+            timerNum = setTimeout(() => {
+                const target = parseInt(numInput) - 1;
+                if (target >= 0 && target < canales.length) cargarCanal(target);
+                numInput = ""; display.style.display = "none";
+                if(keypadOpen) toggleKeypad();
+            }, 1200);
+        }
+
+        function actualizarFoco() {
+            const cards = document.querySelectorAll('.card');
+            cards.forEach((c, i) => {
+                c.classList.toggle('focused', i === focusIdx);
+                if(i === focusIdx) c.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            });
+        }
+
+        window.addEventListener('keydown', (e) => {
+            const key = e.keyCode || e.which;
+            if([37, 38, 39, 40].indexOf(key) > -1) e.preventDefault();
+
+            if (key === 405 || key === 32 || key === 461) { toggleMenu(); return; }
+            if (key >= 48 && key <= 57) { handleNumbers(key - 48); return; }
+
+            if (menuOpen) {
+                if (key === 38) { focusIdx = Math.max(0, focusIdx - 5); actualizarFoco(); }
+                if (key === 40) { focusIdx = Math.min(canales.length - 1, focusIdx + 5); actualizarFoco(); }
+                if (key === 37) { focusIdx = Math.max(0, focusIdx - 1); actualizarFoco(); }
+                if (key === 39) { focusIdx = Math.min(canales.length - 1, focusIdx + 1); actualizarFoco(); }
+                if (key === 13) { cargarCanal(focusIdx); toggleMenu(); }
+            } else {
+                if (key === 33 || key === 38 || key === 427) cambiarCanal(1);
+                if (key === 34 || key === 40 || key === 428) cambiarCanal(-1);
+            }
+        });
+
+        window.onload = () => {
+            const container = document.getElementById('contenedor-canales');
+            // Filtrar duplicados de categorías para mantener orden visual limpio
+            const categories = [...new Set(canales.map(c => c.cat))];
+            
+            categories.forEach(cat => {
+                const section = document.createElement('div');
+                const catId = cat.replace(/\s+/g, '');
+                section.innerHTML = `<div class="category-name">${cat}</div><div class="channels-grid" id="cat-${catId}"></div>`;
+                container.appendChild(section);
+            });
+
+            canales.forEach((c, i) => {
+                const card = document.createElement('div');
+                card.className = 'card';
+                const catId = c.cat.replace(/\s+/g, '');
+                // MODIFICADO: Logos desde carpeta /logos/ y añadido div para EPG
+                card.innerHTML = `
+                    <img class="card-img" src="logos/${i + 1}.png" onerror="this.style.display='none'" alt="">
+                    <span style="font-size:10px; opacity:0.6;">CANAL ${i + 1}</span>
+                    <strong>${c.nombre}</strong>
+                    <div class="card-epg">...</div>
+                `;
+                card.onclick = () => { cargarCanal(i); toggleMenu(); };
+                const targetGrid = document.getElementById(`cat-${catId}`);
+                if(targetGrid) targetGrid.appendChild(card);
+            });
+            
+            cargarCanal(0);
+            cargarEPG(); // Cargar la guía XML al iniciar
+            
+            // Recargar EPG cada 15 minutos para mantenerla fresca
+            setInterval(cargarEPG, 15 * 60 * 1000);
+        };
+/* ===============================
+   FIX DE FOCUS – SMART TV LG
+   NO MODIFICA NADA EXISTENTE
+   =============================== */
+
+// Captura el teclado incluso si iframe/video tiene foco
+document.addEventListener('keydown', function () {
+    window.focus();
+}, true); // <- modo captura (clave)
+
+// Si el navegador pierde el foco, lo recupera
+window.addEventListener('blur', function () {
+    setTimeout(() => window.focus(), 0);
+});
+
+// Click dentro del video o iframe
+document.addEventListener('mousedown', function () {
+    window.focus();
+});
+
+// Evitar que iframe o video secuestren el foco
+document.addEventListener('focusin', function (e) {
+    if (e.target.tagName === 'IFRAME' || e.target.tagName === 'VIDEO') {
+        window.focus();
+    }
+});
+
+    </script>
+</body>
+</html>
